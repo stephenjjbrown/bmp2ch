@@ -1,45 +1,62 @@
 use std::{env::args, fs};
+use bitmap::Bitmap;
 
+pub mod bitmap;
+
+const TILE_SIZE: usize = 8;
+const ROW_WIDTH: usize = 128;
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = args().collect();
     
     if args.len() < 2 {
-        return Err("Please supply .bmp as first argument".to_owned())
+        return Err(String::from("Please supply .bmp as first argument"));
     }
 
     let file_path = &args[1];
     let result = fs::read(file_path);
 
     if let Ok(bytes) = result {
-        return process_file(file_path, bytes);
+        let bitmap = Bitmap { bytes };
+        return process_file(file_path, bitmap);
     } else {
         let err = result.unwrap_err();
         return Err(err.to_string());
     }
 }
 
-fn process_file(path: &String, bytes: Vec<u8>) -> Result<(), String> {
-    let file_length = bytes.len();
 
-    println!("Processing bmp...");
+fn process_file(path: &String, bitmap: Bitmap) -> Result<(), String> {
+    bitmap.verify_header();
 
-    // Address is little endian, but BitConverter seems to be okay with this
-    // May need to add a check to make sure BitConverter.IsLittleEndian is true
-    let pixel_data_address = u32::from_le_bytes([
-        bytes[0x0a],
-        bytes[0x0a+1],
-        bytes[0x0a+2],
-        bytes[0x0a+3]
-    ]) as usize;
+    if bitmap.get_width() != (ROW_WIDTH as i32) {
+        return Err(String::from(format!("Image must be {} pixels wide", ROW_WIDTH)));
+    }
+    if bitmap.get_height() % (TILE_SIZE as i32) != 0 {
+        return Err(String::from(format!("Image height must be a multiple of {} pixels", TILE_SIZE)));
+    }
+    if bitmap.get_bpp() > 8 {
+        return Err(String::from(
+            "Image must be in indexed color mode and have 256 colors or fewer. (< 8bpp)"
+        ));
+    }
+    if bitmap.get_compression_format() != 0 {
+        return Err(String::from("Image must be a standard uncompressed bitmap format"));
+    }
 
-    let pixel_data = &bytes[pixel_data_address..file_length];
+    let file_length = bitmap.len();
+
+    print!("Converting bmp to chr...");
+
+    let pixel_data_address = bitmap.get_pixel_data_address();
+    let pixel_data = &bitmap.bytes[pixel_data_address..file_length];
 
     let mut reversed_pixel_data: Vec<u8> = Vec::new();
     // Reverse scanlines since bitmap starts with last row and goes backwards
-    let mut i = (pixel_data.len() - 128) as i32;
+    // TODO: this step is probably unnecessary and could be accounted for in the later loop
+    let mut i = (pixel_data.len() - ROW_WIDTH) as i32;
     while i >= 0 {
-        for j in 0..128 {
+        for j in 0..ROW_WIDTH {
             let data = pixel_data[(i as usize) + j];
             reversed_pixel_data.push(data);
         }
@@ -47,11 +64,11 @@ fn process_file(path: &String, bytes: Vec<u8>) -> Result<(), String> {
         i -= 128;
     }
 
-    return process_pixel_bytes(path, reversed_pixel_data)
+    process_pixel_bytes(path, reversed_pixel_data)
 }
 
 fn process_pixel_bytes(path: &String, pixel_data: Vec<u8>) -> Result<(), String> {
-    let scanline_count = pixel_data.len() / 128;
+    //let scanline_count = pixel_data.len() / 128;
     let mut tile_data: Vec<Vec<u8>> = Vec::new();
 
     // Divide / reorder rows of 128 pixels into 8x8 tiles
@@ -59,26 +76,26 @@ fn process_pixel_bytes(path: &String, pixel_data: Vec<u8>) -> Result<(), String>
     while i < pixel_data.len() { // Iterate every 8 scanlines
 
         let mut j = 0;
-        while j < 128 { // Then iterate every 8 columns
+        while j < ROW_WIDTH { // Then iterate every 8 columns
             let mut tile: Vec<u8> = Vec::new();
 
             let mut k = 0;
-            while k < 1024 { // Starting from there, iterate over 8 8-pixel rows
+            while k < (ROW_WIDTH * TILE_SIZE) { // Starting from there, iterate over 8 8-pixel rows
 
-                for l in 0..8 { // Then each of the 8 pixels in that row
+                for l in 0..TILE_SIZE { // Then each of the 8 pixels in that row
                     tile.push(pixel_data[i + k + j + l]);
                 }
 
-                k += 128;
+                k += ROW_WIDTH;
             }
 
             tile_data.push(tile);
-            j += 8;
+            j += TILE_SIZE;
         }
-        i += 128 * 8;
+        i += ROW_WIDTH * TILE_SIZE;
     }
     
-    return process_tiles(path, tile_data)
+    process_tiles(path, tile_data)
 }
 
 fn process_tiles(path: &String, tile_data: Vec<Vec<u8>>) -> Result<(), String> {
@@ -88,12 +105,12 @@ fn process_tiles(path: &String, tile_data: Vec<Vec<u8>>) -> Result<(), String> {
         let mut low_bit_plane: Vec<u8> = Vec::new();
         let mut hi_bit_plane: Vec<u8> = Vec::new();
 
-        for i in 0..8 {
+        for i in 0..TILE_SIZE {
             let mut low_bit_plane_for_row = 0x00;
             let mut hi_bit_plane_for_row = 0x00;
 
-            for j in 0..8 {
-                let pixel_byte = tile[(i * 8) + j];
+            for j in 0..TILE_SIZE {
+                let pixel_byte = tile[(i * TILE_SIZE) + j];
 
                 let mut low_bit = pixel_byte & 0b0000_0001;
                 let mut hi_bit = (pixel_byte & 0b0000_0010) >> 1;
@@ -117,7 +134,7 @@ fn process_tiles(path: &String, tile_data: Vec<Vec<u8>>) -> Result<(), String> {
         return Err(err.to_string());
     }
 
-    println!("Converting .bmp to .chr complete!");
+    println!("complete!");
 
     Ok(())
 }

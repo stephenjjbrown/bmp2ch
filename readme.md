@@ -1,6 +1,6 @@
 # Bmp2chr
 
-Cross-platform command line tool to convert an indexed-color Bitmap (.bmp) into CHR data for use in developing Nintento Entertainment System (NES) ROMs.
+Cross-platform command line tool to convert an indexed-color bitmap (.bmp) into CHR data for use in developing Nintendo Entertainment System (NES) ROMs.
 
 
 ![](screenshot.png)
